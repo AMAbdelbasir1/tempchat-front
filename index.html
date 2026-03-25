@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <title>TempLink – Instant Private Chat & File Share</title>
+
+    <style>
+      /*
+       * ✅ FIX: html/body fill height but DON'T block overflow globally.
+       * ChatScreen uses `fixed inset-0` to lock itself.
+       * Other screens (Landing, Join) can scroll naturally.
+       */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overscroll-behavior: none;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      #root {
+        min-height: 100%;
+      }
+
+      :root {
+        --vh: 1vh;
+      }
+    </style>
+
+    <script>
+      (function () {
+        try {
+          var search = window.location.search;
+          var hash = window.location.hash;
+          var qMatch = search.match(/[?&]room=([A-Z0-9]{4,10})/i);
+          var hMatch = hash.match(/[#&]room=([A-Z0-9]{4,10})/i);
+          var code = (qMatch && qMatch[1]) || (hMatch && hMatch[1]) || "";
+          if (code) {
+            code = code.toUpperCase();
+            sessionStorage.setItem("templink_room", code);
+            if (!hash.includes("room=")) {
+              window.history.replaceState(
+                {},
+                "",
+                window.location.pathname + "?room=" + code,
+              );
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
