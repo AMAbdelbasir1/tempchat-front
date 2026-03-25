@@ -106,25 +106,28 @@ export function useMessageHandler(deps: Deps) {
   /* ── Chat message (text, link, edit, delete) ─────────────── */
   const handleChat = useCallback(
     (c: ChatPayload) => {
+      // Ignore own messages
       if (c.from === myIdRef.current) return;
 
-      // ✅ NEW: Handle edit
-      if (c.msgType === "edit" && c.editMsgId) {
-        updateMsg(c.editMsgId, {
-          content: c.content,
-          edited: true,
-        });
-        return;
+      // ✅ FIX: 'edit' — update existing message, then STOP
+      if (c.msgType === "edit") {
+        if (c.editMsgId) {
+          updateMsg(c.editMsgId, {
+            content: c.content,
+            edited: true,
+          });
+        }
+        return; // ← was missing — caused fall-through to addMsg
       }
 
-      // ✅ NEW: Handle delete
+      // ✅ FIX: 'delete' — remove message by id, then STOP
+      // c.content holds the target message id (the UUID)
       if (c.msgType === "delete") {
-        // c.content contains the message ID to delete
         removeMsg(c.content);
-        return;
+        return; // ← was missing — caused the UUID to be added as a new message
       }
 
-      // Normal text/link message
+      // Normal text / link message
       addMsg({
         id: c.id,
         type: c.msgType as Message["type"],
