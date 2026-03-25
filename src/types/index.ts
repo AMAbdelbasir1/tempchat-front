@@ -1,10 +1,10 @@
-export type MessageType = 'text' | 'file' | 'system' | 'link';
+export type MessageType = "text" | "file" | "system" | "link";
 
 export interface FileAttachment {
   name: string;
   size: number;
   type: string;
-  url: string; // base64 or blob URL
+  url: string;
   id: string;
 }
 
@@ -12,11 +12,13 @@ export interface Message {
   id: string;
   type: MessageType;
   content: string;
-  sender: 'me' | 'peer';
+  sender: "me" | "peer";
   senderName: string;
   timestamp: number;
   file?: FileAttachment;
-  progress?: number; // 0-100 for file transfers, undefined = complete
+  progress?: number;
+  edited?: boolean; // ← NEW: shows "(edited)" indicator
+  deleted?: boolean; // ← NEW: marks message as deleted
 }
 
 export interface Room {
@@ -26,4 +28,9 @@ export interface Room {
   peerCount: number;
 }
 
-export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+export type ConnectionStatus =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "error";

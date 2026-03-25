@@ -1,58 +1,59 @@
 /**
- * Internal payload types — these are the plaintext objects that get
- * AES-GCM encrypted before being published to the MQTT broker.
+ * Internal payload types.
  *
- * The broker NEVER sees these in plain form.
+ * NEW: ChatPayload now supports 'edit' and 'delete' msgTypes
+ *      with optional editMsgId field.
  */
 
-/** Encrypted wire envelope — what actually travels over MQTT. */
+/** Encrypted wire envelope */
 export interface WireEnvelope {
-  v:   number;  // protocol version (always 1)
-  enc: string;  // base64 AES-GCM ciphertext
+  v: number;
+  enc: string;
 }
 
-/** Presence announcement — join / leave / ping / heartbeat. */
+/** Presence announcement */
 export interface PresencePayload {
-  id:     string;
-  name:   string;
-  action: 'join' | 'leave' | 'ping' | 'heartbeat';
+  id: string;
+  name: string;
+  action: "join" | "leave" | "ping" | "heartbeat";
 }
 
-/** Per-peer tracking entry for heartbeat/timeout detection. */
+/** Per-peer tracking entry */
 export interface PeerEntry {
-  name:      string;
-  lastSeen:  number; // Date.now() of last heartbeat/ping/join
+  name: string;
+  lastSeen: number;
 }
 
-/** Text or link chat message. */
+/** Text, link, edit, or delete chat message */
 export interface ChatPayload {
-  id:        string;
-  from:      string;
-  fromName:  string;
-  msgType:   string;
-  content:   string;
+  id: string;
+  from: string;
+  fromName: string;
+  msgType: string; // 'text' | 'link' | 'edit' | 'delete'
+  content: string;
   timestamp: number;
+  editMsgId?: string; // ← NEW: for edit/delete, the target message ID
 }
 
-/** One chunk of a file transfer. */
+/** One chunk of a file transfer */
 export interface FileChunkPayload {
-  txId:        string;
-  from:        string;
-  fromName:    string;
-  chunkIndex:  number;
+  txId: string;
+  from: string;
+  fromName: string;
+  chunkIndex: number;
   totalChunks: number;
-  fileName:    string;
-  fileType:    string;
-  fileSize:    number;
-  data:        string;   // base64 slice of the file
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  data: string;
 }
 
-/** In-memory buffer while reassembling incoming chunks. */
+/** In-memory buffer while reassembling incoming chunks */
 export interface ChunkBuffer {
-  fileName:    string;
-  fileType:    string;
-  fileSize:    number;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
   totalChunks: number;
-  fromName:    string;
-  received:    Map<number, string>;
+  fromName: string;
+  received: Map<number, string>;
 }

@@ -1,10 +1,7 @@
 /**
  * useMessageHandler — decrypts and routes every incoming message.
  *
- * FIX: Server-mode leave events are now tagged with source:'server'
- * and bypass the LWT grace period check. The grace period only applies
- * to MQTT LWT (Last Will and Testament) messages which can arrive late
- * after a peer has already reconnected.
+ * NEW: Handles 'edit' and 'delete' message types from peers.
  */
 
 import { useCallback, useRef, RefObject } from "react";
@@ -21,7 +18,6 @@ import type {
 import type { Message, FileAttachment } from "../../types";
 import { v4 as uuidv4 } from "uuid";
 
-// How recently a peer must have joined to ignore a plain LWT leave (ms)
 const LWT_GRACE_PERIOD = 10_000;
 
 interface Deps {
@@ -32,6 +28,7 @@ interface Deps {
   chunkBuffers: RefObject<Map<string, ChunkBuffer>>;
   addMsg: (msg: Message) => void;
   updateMsg: (id: string, updates: Partial<Message>) => void;
+  removeMsg: (id: string) => void;
   addSystem: (text: string) => void;
   publish: (topic: string, payload: unknown) => Promise<void>;
   updatePeerSeen: (id: string, name: string) => void;
@@ -39,7 +36,6 @@ interface Deps {
   onCallSignal?: (signal: unknown) => Promise<void>;
 }
 
-// Map txId → msgId for tracking download progress messages
 const txMsgMap = new Map<string, string>();
 
 export function useMessageHandler(deps: Deps) {
@@ -51,6 +47,7 @@ export function useMessageHandler(deps: Deps) {
     chunkBuffers,
     addMsg,
     updateMsg,
+    removeMsg,
     addSystem,
     publish,
     updatePeerSeen,
@@ -58,8 +55,6 @@ export function useMessageHandler(deps: Deps) {
     onCallSignal,
   } = deps;
 
-  // Track when each peer last sent an encrypted join/ping/heartbeat
-  // Used to ignore stale plain LWT leaves after reconnection (MQTT only)
   const lastEncryptedSeen = useRef<Map<string, number>>(new Map());
 
   /* ── Presence ────────────────────────────────────────────── */
@@ -71,11 +66,8 @@ export function useMessageHandler(deps: Deps) {
 
       if (p.action === "join") {
         lastEncryptedSeen.current.set(p.id, Date.now());
-
         updatePeerSeen(p.id, p.name);
         if (!isKnown) addSystem(`🟢 ${p.name} joined the room`);
-
-        // ALWAYS reply with pong
         const pong: PresencePayload = {
           id: myIdRef.current,
           name: myNameRef.current,
@@ -93,22 +85,46 @@ export function useMessageHandler(deps: Deps) {
       }
 
       if (p.action === "leave") {
-        // Encrypted leave — user explicitly clicked "Leave Room"
-        // Always trust these
         if (!isKnown) return;
         const name = removePeer(p.id);
         lastEncryptedSeen.current.delete(p.id);
         addSystem(`🔴 ${name} left the room`);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [addSystem, publish, updatePeerSeen, removePeer],
+    [
+      addSystem,
+      publish,
+      updatePeerSeen,
+      removePeer,
+      myIdRef,
+      myNameRef,
+      roomCodeRef,
+      peersRef,
+    ],
   );
 
-  /* ── Chat message ────────────────────────────────────────── */
+  /* ── Chat message (text, link, edit, delete) ─────────────── */
   const handleChat = useCallback(
     (c: ChatPayload) => {
       if (c.from === myIdRef.current) return;
+
+      // ✅ NEW: Handle edit
+      if (c.msgType === "edit" && c.editMsgId) {
+        updateMsg(c.editMsgId, {
+          content: c.content,
+          edited: true,
+        });
+        return;
+      }
+
+      // ✅ NEW: Handle delete
+      if (c.msgType === "delete") {
+        // c.content contains the message ID to delete
+        removeMsg(c.content);
+        return;
+      }
+
+      // Normal text/link message
       addMsg({
         id: c.id,
         type: c.msgType as Message["type"],
@@ -118,11 +134,10 @@ export function useMessageHandler(deps: Deps) {
         timestamp: c.timestamp,
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [addMsg],
+    [addMsg, updateMsg, removeMsg, myIdRef],
   );
 
-  /* ── File chunk (with download progress) ─────────────────── */
+  /* ── File chunk ──────────────────────────────────────────── */
   const handleFileChunk = useCallback(
     (fc: FileChunkPayload) => {
       if (fc.from === myIdRef.current) return;
@@ -136,7 +151,6 @@ export function useMessageHandler(deps: Deps) {
           fromName: fc.fromName,
           received: new Map(),
         });
-
         const placeholderMsgId = uuidv4();
         txMsgMap.set(fc.txId, placeholderMsgId);
         addMsg({
@@ -152,18 +166,14 @@ export function useMessageHandler(deps: Deps) {
 
       const buf = chunkBuffers.current.get(fc.txId)!;
       buf.received.set(fc.chunkIndex, fc.data);
-
       const pct = Math.round((buf.received.size / buf.totalChunks) * 100);
       const msgId = txMsgMap.get(fc.txId);
 
       if (buf.received.size < buf.totalChunks) {
-        if (msgId) {
-          updateMsg(msgId, { progress: pct });
-        }
+        if (msgId) updateMsg(msgId, { progress: pct });
         return;
       }
 
-      // All chunks received — assemble
       const parts: string[] = [];
       for (let i = 0; i < buf.totalChunks; i++) {
         parts.push(buf.received.get(i) ?? "");
@@ -196,33 +206,20 @@ export function useMessageHandler(deps: Deps) {
           file: attachment,
         });
       }
-
       chunkBuffers.current.delete(fc.txId);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [addMsg, updateMsg],
+    [addMsg, updateMsg, myIdRef, chunkBuffers],
   );
 
-  /* ── ✅ FIXED: Plain leave handler with source awareness ── */
+  /* ── Plain leave handler ─────────────────────────────────── */
   const handlePlainLeave = useCallback(
     (plain: PresencePayload, source: "lwt" | "server") => {
       if (plain.id === myIdRef.current) return;
       if (!peersRef.current.has(plain.id)) return;
 
-      // ✅ FIX: Only apply LWT grace period for MQTT LWT messages
-      // Server-mode leave events are authoritative — always trust them
       if (source === "lwt") {
         const lastSeen = lastEncryptedSeen.current.get(plain.id);
-        if (lastSeen && Date.now() - lastSeen < LWT_GRACE_PERIOD) {
-          console.log(
-            `[TempLink] Ignoring late LWT leave for ${plain.name} — they rejoined recently`,
-          );
-          return;
-        }
-      } else {
-        console.log(
-          `[TempLink] Server confirmed leave for ${plain.name} — removing immediately`,
-        );
+        if (lastSeen && Date.now() - lastSeen < LWT_GRACE_PERIOD) return;
       }
 
       const name = removePeer(plain.id);
@@ -231,8 +228,7 @@ export function useMessageHandler(deps: Deps) {
         `🔴 ${name} ${source === "server" ? "left the room" : "disconnected"}`,
       );
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [addSystem, removePeer],
+    [addSystem, removePeer, myIdRef, peersRef],
   );
 
   /* ── Main router ─────────────────────────────────────────── */
@@ -248,18 +244,15 @@ export function useMessageHandler(deps: Deps) {
         return;
       }
 
-      // v:0 = plain envelope (LWT leave OR server-mode events)
       if (
         envelope.v === 0 &&
         (envelope as unknown as { plain: PresencePayload }).plain
       ) {
         const plain = (envelope as unknown as { plain: PresencePayload }).plain;
-        // ✅ FIX: Check _source flag to determine if this is a server event
         const source = (envelope as unknown as { _source?: string })._source;
 
         if (topic === topics.presence) {
           if (plain.action === "leave") {
-            // ✅ Pass source so handlePlainLeave knows whether to apply grace period
             handlePlainLeave(plain, source === "server" ? "server" : "lwt");
           } else if (
             plain.action === "join" ||
@@ -284,7 +277,6 @@ export function useMessageHandler(deps: Deps) {
         return;
       }
 
-      // Route
       if (topic === topics.presence) {
         await handlePresence(data as unknown as PresencePayload);
       } else if (topic === topics.chat) {

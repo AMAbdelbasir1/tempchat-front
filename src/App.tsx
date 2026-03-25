@@ -6,80 +6,83 @@ import JoinScreen from './components/JoinScreen';
 import DebugOverlay from './components/DebugOverlay';
 import { Loader2 } from 'lucide-react';
 
-// ── Read room code from every source ─────────────────────────────────────
+// ── Read room code AND server URL from every source ──────────────────────
 function detectRoomCode(): string {
   try {
     const qp = new URLSearchParams(window.location.search).get('room');
-    if (qp && qp.trim()) return qp.trim().toUpperCase();
-
-    const hp = new URLSearchParams(
-      window.location.hash.replace(/^#\/?/, '')
-    ).get('room');
-    if (hp && hp.trim()) return hp.trim().toUpperCase();
-
+    if (qp?.trim()) return qp.trim().toUpperCase();
+    const hp = new URLSearchParams(window.location.hash.replace(/^#\/?/, '')).get('room');
+    if (hp?.trim()) return hp.trim().toUpperCase();
     const ss = sessionStorage.getItem('templink_room');
-    if (ss && ss.trim()) return ss.trim().toUpperCase();
-  } catch (_) {}
+    if (ss?.trim()) return ss.trim().toUpperCase();
+  } catch {}
+  return '';
+}
+
+// ✅ NEW: Detect server URL from invite link
+function detectServerUrl(): string {
+  try {
+    const qp = new URLSearchParams(window.location.search).get('server');
+    if (qp?.trim()) return qp.trim();
+    const hp = new URLSearchParams(window.location.hash.replace(/^#\/?/, '')).get('server');
+    if (hp?.trim()) return hp.trim();
+    const ss = sessionStorage.getItem('templink_server');
+    if (ss?.trim()) return ss.trim();
+  } catch {}
   return '';
 }
 
 const INITIAL_ROOM_CODE = detectRoomCode();
+const INITIAL_SERVER_URL = detectServerUrl();
 
 export default function App() {
-  const [joinCode, setJoinCode] = useState<string>(INITIAL_ROOM_CODE);
+  const [joinCode, setJoinCode]     = useState<string>(INITIAL_ROOM_CODE);
+  const [joinServer, setJoinServer] = useState<string>(INITIAL_SERVER_URL);
 
   const {
-    status,
-    room,
-    messages,
-    peerCount,
-    peers,
-    error,
-    fingerprint,
-    isOnline,
-    mode,
-    createRoom,
-    joinRoom,
-    sendMessage,
-    sendFile,
-    sendLink,
-    disconnect,
-    // call
-    activeCall,
-    localStream,
-    remoteStream,
-    isAudioMuted,
-    isVideoMuted,
-    callError,
-    startCall,
-    acceptCall,
-    rejectCall,
-    hangup,
-    toggleAudio,
-    toggleVideo,
+    status, room, messages, peerCount, peers, error, fingerprint,
+    isOnline, mode,
+    createRoom, joinRoom, sendMessage, sendFile, sendLink, disconnect,
+    editMessage, deleteMessage,
+    activeCall, localStream, remoteStream, isAudioMuted, isVideoMuted,
+    callError, startCall, acceptCall, rejectCall, hangup, toggleAudio, toggleVideo,
   } = useChat();
 
-  // Fallback: pick up room from sessionStorage
   useEffect(() => {
     if (!joinCode) {
       const ss = sessionStorage.getItem('templink_room');
       if (ss) setJoinCode(ss.trim().toUpperCase());
     }
+    if (!joinServer) {
+      const ss = sessionStorage.getItem('templink_server');
+      if (ss) setJoinServer(ss.trim());
+    }
   }, []); // eslint-disable-line
+
+  // ✅ If server URL came from invite link, save to localStorage
+  // so it persists for the user's future sessions
+  useEffect(() => {
+    if (INITIAL_SERVER_URL) {
+      localStorage.setItem('templink_server_url', INITIAL_SERVER_URL);
+    }
+  }, []);
 
   const handleDisconnect = () => {
     sessionStorage.removeItem('templink_room');
+    sessionStorage.removeItem('templink_server');
     setJoinCode('');
+    setJoinServer('');
     disconnect();
   };
 
   const handleBack = () => {
     sessionStorage.removeItem('templink_room');
+    sessionStorage.removeItem('templink_server');
     setJoinCode('');
+    setJoinServer('');
     window.history.replaceState({}, '', window.location.pathname);
   };
 
-  // ── Connecting ─────────────────────────────────────────────────────────────
   if (status === 'connecting') {
     const displayCode = room?.code || joinCode;
     return (
@@ -95,58 +98,37 @@ export default function App() {
         )}
         <div className="flex flex-col items-center gap-1 mt-1">
           <p className="text-slate-500 text-xs">Trying relay brokers — will keep retrying until connected.</p>
-          <p className="text-slate-600 text-xs">Check your internet connection if this takes too long.</p>
         </div>
-        <button
-          onClick={handleDisconnect}
-          className="mt-4 text-slate-500 hover:text-slate-300 text-sm underline underline-offset-2 transition-colors"
-        >
+        <button onClick={handleDisconnect}
+          className="mt-4 text-slate-500 hover:text-slate-300 text-sm underline underline-offset-2 transition-colors">
           Cancel
         </button>
-        {/* Debug overlay available on all screens */}
         <DebugOverlay />
       </div>
     );
   }
 
-  // ── Connected → Chat ───────────────────────────────────────────────────────
   if (room && status === 'connected') {
     return (
       <>
         <ChatScreen
-          room={room}
-          messages={messages}
-          peerCount={peerCount}
-          peers={peers}
-          status={status}
-          fingerprint={fingerprint}
-          isOnline={isOnline}
-          mode={mode}
-          onSendMessage={sendMessage}
-          onSendFile={sendFile}
-          onSendLink={sendLink}
+          room={room} messages={messages} peerCount={peerCount} peers={peers}
+          status={status} fingerprint={fingerprint} isOnline={isOnline} mode={mode}
+          onSendMessage={sendMessage} onSendFile={sendFile} onSendLink={sendLink}
           onDisconnect={handleDisconnect}
-          activeCall={activeCall}
-          localStream={localStream}
-          remoteStream={remoteStream}
-          isAudioMuted={isAudioMuted}
-          isVideoMuted={isVideoMuted}
-          callError={callError}
+          onEditMessage={editMessage} onDeleteMessage={deleteMessage}
+          activeCall={activeCall} localStream={localStream} remoteStream={remoteStream}
+          isAudioMuted={isAudioMuted} isVideoMuted={isVideoMuted} callError={callError}
           onStartVoiceCall={(id, name) => startCall(id, name, 'voice')}
           onStartVideoCall={(id, name) => startCall(id, name, 'video')}
-          onAcceptCall={acceptCall}
-          onRejectCall={rejectCall}
-          onHangup={hangup}
-          onToggleAudio={toggleAudio}
-          onToggleVideo={toggleVideo}
+          onAcceptCall={acceptCall} onRejectCall={rejectCall} onHangup={hangup}
+          onToggleAudio={toggleAudio} onToggleVideo={toggleVideo}
         />
-        {/* Debug overlay on chat screen */}
         <DebugOverlay />
       </>
     );
   }
 
-  // ── Join screen (from URL) ─────────────────────────────────────────────────
   if (joinCode && status === 'idle') {
     return (
       <>
@@ -157,16 +139,15 @@ export default function App() {
         )}
         <JoinScreen
           roomCode={joinCode}
+          initialServerUrl={joinServer}
           onJoin={(code, name, serverUrl) => joinRoom(code, name, serverUrl)}
           onBack={handleBack}
         />
-        {/* Debug overlay on join screen */}
         <DebugOverlay />
       </>
     );
   }
 
-  // ── Landing ────────────────────────────────────────────────────────────────
   return (
     <>
       {error && (
@@ -178,7 +159,6 @@ export default function App() {
         onCreate={(name, serverUrl) => createRoom(name, serverUrl)}
         onJoin={(code, name, serverUrl) => joinRoom(code, name, serverUrl)}
       />
-      {/* Debug overlay on landing screen */}
       <DebugOverlay />
     </>
   );

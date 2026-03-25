@@ -8,11 +8,6 @@
     <title>TempLink – Instant Private Chat & File Share</title>
 
     <style>
-      /*
-       * ✅ FIX: html/body fill height but DON'T block overflow globally.
-       * ChatScreen uses `fixed inset-0` to lock itself.
-       * Other screens (Landing, Join) can scroll naturally.
-       */
       html,
       body {
         height: 100%;
@@ -21,34 +16,50 @@
         overscroll-behavior: none;
         -webkit-overflow-scrolling: touch;
       }
-
       #root {
         min-height: 100%;
       }
-
       :root {
         --vh: 1vh;
       }
     </style>
 
     <script>
+      // ── Rescue room code AND server URL from query string BEFORE React loads ──
       (function () {
         try {
           var search = window.location.search;
           var hash = window.location.hash;
+
+          // Room code
           var qMatch = search.match(/[?&]room=([A-Z0-9]{4,10})/i);
           var hMatch = hash.match(/[#&]room=([A-Z0-9]{4,10})/i);
           var code = (qMatch && qMatch[1]) || (hMatch && hMatch[1]) || "";
           if (code) {
             code = code.toUpperCase();
             sessionStorage.setItem("templink_room", code);
-            if (!hash.includes("room=")) {
+            if (!search.includes("room=") && !hash.includes("room=")) {
               window.history.replaceState(
                 {},
                 "",
                 window.location.pathname + "?room=" + code,
               );
             }
+          }
+
+          // ✅ NEW: Server URL
+          var params = new URLSearchParams(search);
+          var server = params.get("server");
+          if (!server) {
+            try {
+              var hashParams = new URLSearchParams(hash.replace(/^#\/?/, ""));
+              server = hashParams.get("server");
+            } catch (e2) {}
+          }
+          if (server && server.trim()) {
+            sessionStorage.setItem("templink_server", server.trim());
+            // Also save to localStorage so it persists
+            localStorage.setItem("templink_server_url", server.trim());
           }
         } catch (e) {}
       })();

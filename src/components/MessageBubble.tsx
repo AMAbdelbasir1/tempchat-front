@@ -1,8 +1,16 @@
-import { Download, ExternalLink, FileText, Image, Film, Music, Archive, Lock, Loader2, Mic } from 'lucide-react';
+import { useState, useRef, useCallback } from 'react';
+import {
+  Download, ExternalLink, FileText, Image, Film,
+  Music, Archive, Lock, Loader2, Mic,
+  Copy, Pencil, Trash2, X,
+} from 'lucide-react';
 import { Message } from '../types';
 
 interface Props {
   msg: Message;
+  onCopy?:   (msg: Message) => void;
+  onEdit?:   (msg: Message) => void;
+  onDelete?: (msg: Message) => void;
 }
 
 function getFileIcon(type: string) {
@@ -13,13 +21,9 @@ function getFileIcon(type: string) {
   return <FileText className="w-4 h-4" />;
 }
 
-/** Check if this is a voice recording (audio file with "Voice" in name) */
 function isVoiceMessage(msg: Message): boolean {
   if (msg.type !== 'file' || !msg.file) return false;
-  return (
-    msg.file.type.startsWith('audio/') &&
-    msg.file.name.toLowerCase().startsWith('voice')
-  );
+  return msg.file.type.startsWith('audio/') && msg.file.name.toLowerCase().startsWith('voice');
 }
 
 function isValidUrl(str: string) {
@@ -36,7 +40,72 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function MessageBubble({ msg }: Props) {
+export default function MessageBubble({ msg, onCopy, onEdit, onDelete }: Props) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchMoved = useRef(false);
+
+  // ── Long press / right-click handlers ─────────────────────────
+  const openMenu = useCallback(() => {
+    if (msg.type === 'system') return;
+    setMenuOpen(true);
+  }, [msg.type]);
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+  }, []);
+
+  const handleTouchStart = useCallback(() => {
+    if (msg.type === 'system') return;
+    touchMoved.current = false;
+    longPressTimer.current = setTimeout(() => {
+      if (!touchMoved.current) openMenu();
+    }, 500);
+  }, [msg.type, openMenu]);
+
+  const handleTouchMove = useCallback(() => {
+    touchMoved.current = true;
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (msg.type === 'system') return;
+    e.preventDefault();
+    openMenu();
+  }, [msg.type, openMenu]);
+
+  // ── Action handlers ───────────────────────────────────────────
+  const handleCopy = useCallback(() => {
+    if (msg.type === 'file' && msg.file) {
+      navigator.clipboard.writeText(msg.file.name);
+    } else {
+      navigator.clipboard.writeText(msg.content);
+    }
+    onCopy?.(msg);
+    closeMenu();
+  }, [msg, onCopy, closeMenu]);
+
+  const handleEdit = useCallback(() => {
+    onEdit?.(msg);
+    closeMenu();
+  }, [msg, onEdit, closeMenu]);
+
+  const handleDelete = useCallback(() => {
+    onDelete?.(msg);
+    closeMenu();
+  }, [msg, onDelete, closeMenu]);
+
+  // ── System messages ───────────────────────────────────────────
   if (msg.type === 'system') {
     return (
       <div className="flex justify-center my-2">
@@ -51,215 +120,222 @@ export default function MessageBubble({ msg }: Props) {
   const isLoading  = msg.progress !== undefined && msg.progress >= 0;
   const isFailed   = msg.content.includes('Failed');
   const isVoice    = isVoiceMessage(msg);
+  const canEdit    = isMe && (msg.type === 'text' || msg.type === 'link') && !isLoading;
+  const canDelete  = !isLoading;
 
   return (
-    <div className={`flex gap-2 mb-3 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-      {/* Avatar */}
-      <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold ${
-        isMe ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300'
-      }`}>
-        {msg.senderName.charAt(0).toUpperCase()}
-      </div>
+    <>
+      {/* ── Backdrop to close menu ── */}
+      {menuOpen && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={closeMenu}
+          onTouchStart={closeMenu}
+        />
+      )}
 
-      <div className={`max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-        {/* Name */}
-        <span className="text-[11px] text-slate-500 mb-0.5 px-1">{msg.senderName}</span>
+      <div
+        className={`flex gap-2 mb-3 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onContextMenu={handleContextMenu}
+      >
+        {/* Avatar */}
+        <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold ${
+          isMe ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300'
+        }`}>
+          {msg.senderName.charAt(0).toUpperCase()}
+        </div>
 
-        {/* ── Voice message bubble ── */}
-        {msg.type === 'file' && isVoice ? (
-          <div className={`rounded-2xl overflow-hidden border w-full min-w-[220px] max-w-[300px] ${
-            isMe
-              ? 'bg-indigo-600/20 border-indigo-500/30'
-              : 'bg-white/[0.05] border-white/[0.08]'
-          }`}>
-            <div className="flex items-center gap-3 px-3 pt-3 pb-1">
-              <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
-                isMe ? 'bg-indigo-500/30 text-indigo-300' : 'bg-white/[0.08] text-slate-300'
-              }`}>
-                {isLoading
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <Mic className="w-4 h-4" />
-                }
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-slate-300">
-                  🎙️ Voice message
-                </div>
-                {isLoading ? (
-                  <div className="text-xs text-indigo-300 font-medium">
-                    {isMe ? `Sending… ${msg.progress}%` : `Receiving… ${msg.progress}%`}
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-500">
-                    {formatBytes(msg.file?.size ?? 0)}
-                  </div>
-                )}
-              </div>
+        <div className={`max-w-[75%] flex flex-col relative ${isMe ? 'items-end' : 'items-start'}`}>
+          {/* Name */}
+          <span className="text-[11px] text-slate-500 mb-0.5 px-1">{msg.senderName}</span>
+
+          {/* ── Context Menu ── */}
+          {menuOpen && (
+            <div className={`
+              absolute z-50 bottom-full mb-1
+              ${isMe ? 'right-0' : 'left-0'}
+              flex items-center gap-1
+              bg-gray-800 border border-white/[0.1]
+              rounded-xl px-1.5 py-1
+              shadow-2xl shadow-black/60
+              animate-in fade-in zoom-in-95 duration-150
+            `}>
+              {/* Copy */}
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-white/[0.1] hover:text-white transition-colors"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy</span>
+              </button>
+
+              {/* Edit — only own text/link messages */}
+              {canEdit && (
+                <button
+                  onClick={handleEdit}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-indigo-400 hover:bg-indigo-500/10 hover:text-indigo-300 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  <span>Edit</span>
+                </button>
+              )}
+
+              {/* Delete */}
+              {canDelete && (
+                <button
+                  onClick={handleDelete}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+              )}
+
+              {/* Close */}
+              <button
+                onClick={closeMenu}
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-white/[0.1] hover:text-slate-300 transition-colors"
+              >
+                <X className="w-3 h-3" />
+              </button>
             </div>
+          )}
 
-            {/* Audio player — only when complete */}
-            {!isLoading && !isFailed && msg.file?.url && (
-              <div className="px-3 pb-3 pt-1">
-                <audio
-                  src={msg.file.url}
-                  controls
-                  preload="metadata"
-                  controlsList="nodownload"
-                  className="w-full h-8 opacity-90"
-                  style={{
-                    /* Style the audio player to match dark theme */
-                    filter: 'invert(1) hue-rotate(180deg)',
-                    borderRadius: '8px',
-                  }}
-                />
+          {/* ── Voice message bubble ── */}
+          {msg.type === 'file' && isVoice ? (
+            <div className={`rounded-2xl overflow-hidden border w-full min-w-[220px] max-w-[300px] ${
+              isMe ? 'bg-indigo-600/20 border-indigo-500/30' : 'bg-white/[0.05] border-white/[0.08]'
+            }`}>
+              <div className="flex items-center gap-3 px-3 pt-3 pb-1">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  isMe ? 'bg-indigo-500/30 text-indigo-300' : 'bg-white/[0.08] text-slate-300'
+                }`}>
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-slate-300">🎙️ Voice message</div>
+                  {isLoading ? (
+                    <div className="text-xs text-indigo-300 font-medium">
+                      {isMe ? `Sending… ${msg.progress}%` : `Receiving… ${msg.progress}%`}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-500">{formatBytes(msg.file?.size ?? 0)}</div>
+                  )}
+                </div>
               </div>
-            )}
-
-            {/* Progress bar */}
-            {isLoading && (
-              <div className="px-3 pb-3">
-                <div className="w-full h-1.5 bg-black/30 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${msg.progress ?? 0}%` }}
+              {!isLoading && !isFailed && msg.file?.url && (
+                <div className="px-3 pb-3 pt-1">
+                  <audio
+                    src={msg.file.url} controls preload="metadata"
+                    controlsList="nodownload"
+                    className="w-full h-8 opacity-90"
+                    style={{ filter: 'invert(1) hue-rotate(180deg)', borderRadius: '8px' }}
                   />
                 </div>
-              </div>
-            )}
-          </div>
-
-        ) : msg.type === 'file' ? (
-          /* ── Regular file bubble ── */
-          <div className={`rounded-2xl overflow-hidden border w-full min-w-[200px] ${
-            isMe
-              ? 'bg-indigo-600/20 border-indigo-500/30'
-              : 'bg-white/[0.05] border-white/[0.08]'
-          }`}>
-            {/* Image preview */}
-            {msg.file?.type.startsWith('image/') && !isLoading && msg.file?.url && (
-              <img
-                src={msg.file.url}
-                alt={msg.file.name}
-                className="max-w-xs max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                onClick={() => window.open(msg.file!.url, '_blank')}
-              />
-            )}
-            {/* Video preview */}
-            {msg.file?.type.startsWith('video/') && !isLoading && msg.file?.url && (
-              <video
-                src={msg.file.url}
-                controls
-                className="max-w-xs max-h-48"
-              />
-            )}
-            {/* Audio preview (non-voice audio files like .mp3) */}
-            {msg.file?.type.startsWith('audio/') && !isVoice && !isLoading && msg.file?.url && (
-              <div className="px-3 pt-2">
-                <audio
-                  src={msg.file.url}
-                  controls
-                  preload="metadata"
-                  className="w-full h-8"
-                  style={{
-                    filter: 'invert(1) hue-rotate(180deg)',
-                    borderRadius: '8px',
-                  }}
-                />
-              </div>
-            )}
-            {/* File info row */}
-            <div className="flex items-center gap-3 p-3">
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                isMe ? 'bg-indigo-500/30 text-indigo-300' : 'bg-white/[0.08] text-slate-300'
-              }`}>
-                {isLoading
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : getFileIcon(msg.file?.type ?? '')
-                }
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-white truncate">
-                  {msg.file?.name ?? 'File'}
+              )}
+              {isLoading && (
+                <div className="px-3 pb-3">
+                  <div className="w-full h-1.5 bg-black/30 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${msg.progress ?? 0}%` }} />
+                  </div>
                 </div>
-                {isLoading ? (
-                  <div className="text-xs text-indigo-300 font-medium">
-                    {isMe ? `Sending… ${msg.progress}%` : `Receiving… ${msg.progress}%`}
-                  </div>
-                ) : isFailed ? (
-                  <div className="text-xs text-red-400 font-medium">
-                    Failed to send
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-400">
-                    {formatBytes(msg.file?.size ?? 0)}
-                  </div>
-                )}
-              </div>
-              {/* Download button */}
-              {!isLoading && !isFailed && msg.file?.url && (
-                <a
-                  href={msg.file.url}
-                  download={msg.file.name}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors flex-shrink-0 ${
-                    isMe
-                      ? 'bg-indigo-500/30 hover:bg-indigo-500/50 text-indigo-300'
-                      : 'bg-white/[0.08] hover:bg-white/[0.15] text-slate-300'
-                  }`}
-                >
-                  <Download className="w-4 h-4" />
-                </a>
               )}
             </div>
 
-            {/* Progress bar */}
-            {isLoading && (
-              <div className="px-3 pb-3">
-                <div className="w-full h-1.5 bg-black/30 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${msg.progress ?? 0}%` }}
-                  />
+          ) : msg.type === 'file' ? (
+            /* ── Regular file bubble ── */
+            <div className={`rounded-2xl overflow-hidden border w-full min-w-[200px] ${
+              isMe ? 'bg-indigo-600/20 border-indigo-500/30' : 'bg-white/[0.05] border-white/[0.08]'
+            }`}>
+              {msg.file?.type.startsWith('image/') && !isLoading && msg.file?.url && (
+                <img src={msg.file.url} alt={msg.file.name}
+                  className="max-w-xs max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                  onClick={() => window.open(msg.file!.url, '_blank')} />
+              )}
+              {msg.file?.type.startsWith('video/') && !isLoading && msg.file?.url && (
+                <video src={msg.file.url} controls className="max-w-xs max-h-48" />
+              )}
+              {msg.file?.type.startsWith('audio/') && !isVoice && !isLoading && msg.file?.url && (
+                <div className="px-3 pt-2">
+                  <audio src={msg.file.url} controls preload="metadata" className="w-full h-8"
+                    style={{ filter: 'invert(1) hue-rotate(180deg)', borderRadius: '8px' }} />
                 </div>
+              )}
+              <div className="flex items-center gap-3 p-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  isMe ? 'bg-indigo-500/30 text-indigo-300' : 'bg-white/[0.08] text-slate-300'
+                }`}>
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : getFileIcon(msg.file?.type ?? '')}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-white truncate">{msg.file?.name ?? 'File'}</div>
+                  {isLoading ? (
+                    <div className="text-xs text-indigo-300 font-medium">
+                      {isMe ? `Sending… ${msg.progress}%` : `Receiving… ${msg.progress}%`}
+                    </div>
+                  ) : isFailed ? (
+                    <div className="text-xs text-red-400 font-medium">Failed to send</div>
+                  ) : (
+                    <div className="text-xs text-slate-400">{formatBytes(msg.file?.size ?? 0)}</div>
+                  )}
+                </div>
+                {!isLoading && !isFailed && msg.file?.url && (
+                  <a href={msg.file.url} download={msg.file.name}
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors flex-shrink-0 ${
+                      isMe ? 'bg-indigo-500/30 hover:bg-indigo-500/50 text-indigo-300'
+                           : 'bg-white/[0.08] hover:bg-white/[0.15] text-slate-300'
+                    }`}>
+                    <Download className="w-4 h-4" />
+                  </a>
+                )}
               </div>
+              {isLoading && (
+                <div className="px-3 pb-3">
+                  <div className="w-full h-1.5 bg-black/30 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${msg.progress ?? 0}%` }} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+          ) : msg.type === 'link' && isValidUrl(msg.content) ? (
+            /* ── Link bubble ── */
+            <div className={`rounded-2xl p-3 border ${
+              isMe ? 'bg-indigo-600/20 border-indigo-500/30' : 'bg-white/[0.05] border-white/[0.08]'
+            }`}>
+              <div className="flex items-center gap-2">
+                <ExternalLink className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                <a href={msg.content} target="_blank" rel="noopener noreferrer"
+                  className="text-indigo-400 hover:text-indigo-300 text-sm break-all underline underline-offset-2">
+                  {msg.content}
+                </a>
+              </div>
+            </div>
+          ) : (
+            /* ── Text bubble ── */
+            <div className={`rounded-2xl px-4 py-2.5 ${
+              isMe ? 'bg-indigo-600 text-white rounded-br-sm'
+                   : 'bg-white/[0.07] text-slate-100 border border-white/[0.08] rounded-bl-sm'
+            }`}>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
+            </div>
+          )}
+
+          {/* Timestamp + lock + edited indicator */}
+          <div className="flex items-center gap-1 mt-0.5 px-1">
+            <Lock className="w-2.5 h-2.5 text-slate-700" />
+            <span className="text-[10px] text-slate-600">{formatTime(msg.timestamp)}</span>
+            {msg.edited && (
+              <span className="text-[10px] text-slate-600 italic">· edited</span>
             )}
           </div>
-
-        ) : msg.type === 'link' && isValidUrl(msg.content) ? (
-          /* ── Link bubble ── */
-          <div className={`rounded-2xl p-3 border ${
-            isMe
-              ? 'bg-indigo-600/20 border-indigo-500/30'
-              : 'bg-white/[0.05] border-white/[0.08]'
-          }`}>
-            <div className="flex items-center gap-2">
-              <ExternalLink className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-              <a
-                href={msg.content}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-indigo-400 hover:text-indigo-300 text-sm break-all underline underline-offset-2"
-              >
-                {msg.content}
-              </a>
-            </div>
-          </div>
-        ) : (
-          /* ── Text bubble ── */
-          <div className={`rounded-2xl px-4 py-2.5 ${
-            isMe
-              ? 'bg-indigo-600 text-white rounded-br-sm'
-              : 'bg-white/[0.07] text-slate-100 border border-white/[0.08] rounded-bl-sm'
-          }`}>
-            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
-          </div>
-        )}
-
-        {/* Timestamp + lock */}
-        <div className="flex items-center gap-1 mt-0.5 px-1">
-          <Lock className="w-2.5 h-2.5 text-slate-700" />
-          <span className="text-[10px] text-slate-600">{formatTime(msg.timestamp)}</span>
         </div>
       </div>
-    </div>
+    </>
   );
 }

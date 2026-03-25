@@ -1,9 +1,11 @@
 /**
  * useChat — thin orchestrator.
  *
- * FIX: Passes connection mode to useSenders for mode-aware file transfer.
- * Server mode: fast 128KB chunks, no delay
- * MQTT mode: safe 8KB chunks, 200ms delay
+ * ✅ UPDATED:
+ *   - removeMsg for delete support
+ *   - editMessage / deleteMessage from useSenders
+ *   - roomLink now includes serverUrl for smart invite links
+ *   - getMode passed to useSenders for fast file transfer
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -43,6 +45,7 @@ export function useChat() {
   const myIdRef = useRef(uuidv4());
   const myNameRef = useRef("");
   const myCodeRef = useRef("");
+  const myServerUrlRef = useRef<string | undefined>(undefined);
   const clientRef = useRef<MqttClient | null>(null);
   const destroyed = useRef(false);
 
@@ -53,6 +56,7 @@ export function useChat() {
   const peerWatchTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const isOnlineRef = useRef(true);
 
+  // Ref for binary handler from useCall (WS audio relay)
   const handleBinaryRef = useRef<((data: ArrayBuffer) => void) | null>(null);
 
   /* ── Helpers ─────────────────────────────────────────────── */
@@ -60,6 +64,7 @@ export function useChat() {
     (msg: Message) => setMessages((prev) => [...prev, msg]),
     [],
   );
+
   const updateMsg = useCallback(
     (id: string, updates: Partial<Message>) =>
       setMessages((prev) =>
@@ -67,6 +72,13 @@ export function useChat() {
       ),
     [],
   );
+
+  // ✅ NEW: Remove a message by ID (for delete)
+  const removeMsg = useCallback(
+    (id: string) => setMessages((prev) => prev.filter((m) => m.id !== id)),
+    [],
+  );
+
   const addSystem = useCallback(
     (text: string) =>
       addMsg({
@@ -79,6 +91,7 @@ export function useChat() {
       }),
     [addMsg],
   );
+
   const syncPeers = useCallback(() => {
     setPeerCount(peers.current.size);
     setPeerList(
@@ -153,6 +166,7 @@ export function useChat() {
           entry.lastSeen = Date.now();
         });
     },
+    // Binary messages from server → forward to useCall's WS audio relay
     onBinaryMessage: (data: ArrayBuffer) => {
       handleBinaryRef.current?.(data);
     },
@@ -216,6 +230,7 @@ export function useChat() {
     getWs: () => serverGetWs(),
   });
 
+  // Wire binary handler so useBroker → useCall
   handleBinaryRef.current = handleBinaryMessage;
 
   /* ── Message handler ─────────────────────────────────────── */
@@ -227,6 +242,7 @@ export function useChat() {
     chunkBuffers: chunks,
     addMsg,
     updateMsg,
+    removeMsg,
     addSystem,
     publish,
     updatePeerSeen,
@@ -286,6 +302,7 @@ export function useChat() {
 
     peerWatchTimer.current = setInterval(() => {
       if (!isOnlineRef.current) return;
+      // Skip peer timeout in server mode — server handles it
       if (modeRef.current === "server") return;
       const now = Date.now();
       let changed = false;
@@ -300,16 +317,18 @@ export function useChat() {
     }, HEARTBEAT_INTERVAL);
   }, [addSystem, publish, syncPeers, modeRef]);
 
-  /* ── Senders (✅ FIX: pass getMode for mode-aware file transfer) ─── */
-  const { sendMessage, sendLink, sendFile } = useSenders({
-    myIdRef,
-    myNameRef,
-    roomCodeRef: myCodeRef,
-    addMsg,
-    updateMsg,
-    publish,
-    getMode: () => modeRef.current,
-  });
+  /* ── Senders (with edit, delete, getMode) ────────────────── */
+  const { sendMessage, sendLink, sendFile, editMessage, deleteMessage } =
+    useSenders({
+      myIdRef,
+      myNameRef,
+      roomCodeRef: myCodeRef,
+      addMsg,
+      updateMsg,
+      removeMsg,
+      publish,
+      getMode: () => modeRef.current,
+    });
 
   /* ── Start room ──────────────────────────────────────────── */
   const startRoom = useCallback(
@@ -317,6 +336,7 @@ export function useChat() {
       destroyed.current = false;
       myNameRef.current = name;
       myCodeRef.current = code;
+      myServerUrlRef.current = serverUrl;
       peers.current.clear();
       chunks.current.clear();
       setMessages([]);
@@ -327,9 +347,11 @@ export function useChat() {
       setIsOnline(true);
       isOnlineRef.current = true;
       setStatus("connecting");
+
+      // ✅ FIX: Include server URL in room link for smart invite
       setRoom({
         code,
-        link: roomLink(code),
+        link: roomLink(code, serverUrl),
         createdAt: Date.now(),
         peerCount: 0,
       });
@@ -381,6 +403,7 @@ export function useChat() {
     const code = myCodeRef.current;
     if (!code) return;
 
+    // Server mode: closing WS triggers leave broadcast
     if (modeRef.current === "server") {
       console.log("[useChat] Server mode — WS close triggers leave");
       return;
@@ -428,6 +451,7 @@ export function useChat() {
     myIdRef.current = uuidv4();
     myCodeRef.current = "";
     myNameRef.current = "";
+    myServerUrlRef.current = undefined;
     setRoom(null);
     setMessages([]);
     setPeerCount(0);
@@ -485,6 +509,7 @@ export function useChat() {
     };
   }, [stopTimers, brokerDisconnectAll]);
 
+  /* ── Return ──────────────────────────────────────────────── */
   return {
     status,
     room,
@@ -502,6 +527,8 @@ export function useChat() {
     sendMessage,
     sendLink,
     sendFile,
+    editMessage,
+    deleteMessage,
     disconnect,
     activeCall,
     localStream,
